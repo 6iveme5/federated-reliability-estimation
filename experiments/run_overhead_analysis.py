@@ -10,7 +10,13 @@ import pandas as pd
 import torch
 
 from fedrel_journal.config import load_config
-from fedrel_journal.data import FEATURE_COLUMNS, TARGET_COLUMN, load_chuc_federated, load_federated_csv_dir
+from fedrel_journal.data import (
+    FEATURE_COLUMNS,
+    TARGET_COLUMN,
+    load_chuc_federated,
+    load_federated_csv_dir,
+    load_support2_federated,
+)
 from fedrel_journal.overhead import model_nbytes
 from fedrel_journal.surrogate.training import (
     FederatedSurrogateConfig,
@@ -23,9 +29,14 @@ from fedrel_journal.surrogate.training import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Measure reliability surrogate overhead.")
     parser.add_argument("--config", type=Path, default=Path("configs/default.yaml"))
-    parser.add_argument("--dataset", choices=["federated_csv", "chuc"], default="federated_csv")
+    parser.add_argument(
+        "--dataset",
+        choices=["federated_csv", "chuc", "support2"],
+        default="federated_csv",
+    )
     parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--chuc-path", type=Path, default=None)
+    parser.add_argument("--support2-path", type=Path, default=None)
     parser.add_argument("--partition", choices=["iid", "label_skew", "feature_skew"], default="iid")
     parser.add_argument("--feature-column", default="killip_class")
     parser.add_argument("--n-clients", type=int, default=4)
@@ -97,8 +108,8 @@ def main() -> None:
     rows = [
         {
             "dataset": args.dataset,
-            "partition": args.partition if args.dataset == "chuc" else "native",
-            "feature_column": args.feature_column if args.dataset == "chuc" else "",
+            "partition": args.partition if args.dataset != "federated_csv" else "native",
+            "feature_column": args.feature_column if args.dataset != "federated_csv" else "",
             "optimizer": args.optimizer,
             "seed": seed,
             "n_clients": n_clients,
@@ -138,6 +149,15 @@ def load_dataset(args: argparse.Namespace, config: dict, seed: int):
             feature_column=args.feature_column,
             seed=seed,
         )
+    if args.dataset == "support2":
+        support2_path = args.support2_path or Path(config["data"]["support2_path"])
+        return load_support2_federated(
+            support2_path,
+            n_clients=args.n_clients,
+            strategy=args.partition,
+            feature_column=args.feature_column,
+            seed=seed,
+        )
 
     data_dir = args.data_dir or Path(config["data"]["federated_dir"])
     return load_federated_csv_dir(
@@ -148,10 +168,10 @@ def load_dataset(args: argparse.Namespace, config: dict, seed: int):
 
 
 def overhead_filename(args: argparse.Namespace, seed: int, suffix: str) -> str:
-    if args.dataset == "chuc" and args.partition == "feature_skew":
-        scenario = f"chuc_{args.feature_column}_skew"
-    elif args.dataset == "chuc":
-        scenario = f"chuc_{args.partition}"
+    if args.dataset != "federated_csv" and args.partition == "feature_skew":
+        scenario = f"{args.dataset}_{args.feature_column}_skew"
+    elif args.dataset != "federated_csv":
+        scenario = f"{args.dataset}_{args.partition}"
     else:
         scenario = "native"
     return f"overhead_{scenario}_{args.optimizer}_seed_{seed}{suffix}"

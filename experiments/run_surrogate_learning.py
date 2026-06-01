@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 from pathlib import Path
 
@@ -121,6 +122,11 @@ def main() -> None:
             },
             model_path,
         )
+        del result
+        del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     df = pd.DataFrame(rows)
     csv_path = output_dir / f"surrogate_metrics_{args.dataset}_{args.partition}.csv"
@@ -205,11 +211,12 @@ def evaluation_row(args, optimizer_name, model, surrogate_clients, device):
         detection = error_detection_metrics(method_error_labels, scores)
         row[f"{method}_auroc"] = detection["auroc"]
         row[f"{method}_auprc"] = detection["auprc"]
-        row[f"{method}_risk_at_5"] = risk_at_fraction(
-            method_error_labels,
-            scores,
-            fraction=0.05,
-        )
+        for percentage in [1, 5, 10]:
+            row[f"{method}_risk_at_{percentage}"] = risk_at_fraction(
+                method_error_labels,
+                scores,
+                fraction=percentage / 100.0,
+            )
     return row
 
 

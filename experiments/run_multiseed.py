@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -68,6 +70,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/multiseed"))
     parser.add_argument("--skip-transfer", action="store_true")
     parser.add_argument("--skip-surrogate", action="store_true")
+    parser.add_argument("--skip-existing", action="store_true")
+    parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--threads-per-job", type=int, default=1)
     return parser.parse_args()
 
 
@@ -76,21 +81,43 @@ def main() -> None:
     seeds = [int(seed.strip()) for seed in args.seeds.split(",") if seed.strip()]
     scenarios = [SCENARIOS[name.strip()] for name in args.scenarios.split(",") if name.strip()]
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    if args.jobs < 1:
+        raise ValueError("--jobs must be at least 1")
+    if args.threads_per_job < 1:
+        raise ValueError("--threads-per-job must be at least 1")
 
     if not args.skip_transfer:
-        for scenario in scenarios:
-            for seed in seeds:
-                run_transfer(args, scenario, seed)
+        run_commands(
+            args,
+            [
+                transfer_command(args, scenario, seed)
+                for scenario in scenarios
+                for seed in seeds
+                if not (
+                    args.skip_existing
+                    and transfer_csv_path(args.output_dir, scenario, seed).exists()
+                )
+            ],
+        )
 
     if not args.skip_surrogate:
-        for scenario in scenarios:
-            for seed in seeds:
-                run_surrogate(args, scenario, seed)
+        run_commands(
+            args,
+            [
+                surrogate_command(args, scenario, seed)
+                for scenario in scenarios
+                for seed in seeds
+                if not (
+                    args.skip_existing
+                    and surrogate_csv_path(args.output_dir, scenario, seed).exists()
+                )
+            ],
+        )
 
     aggregate_outputs(args.output_dir, scenarios, seeds)
 
 
-def run_transfer(args: argparse.Namespace, scenario: Scenario, seed: int) -> None:
+def transfer_command(args: argparse.Namespace, scenario: Scenario, seed: int) -> list[str]:
     output_dir = args.output_dir / scenario.name / f"seed_{seed}" / "transfer"
     command = [
         sys.executable,
@@ -108,10 +135,10 @@ def run_transfer(args: argparse.Namespace, scenario: Scenario, seed: int) -> Non
         command += ["--partition", scenario.partition, "--n-clients", str(scenario.n_clients)]
         if scenario.feature_column is not None:
             command += ["--feature-column", scenario.feature_column]
-    run_command(command)
+    return command
 
 
-def run_surrogate(args: argparse.Namespace, scenario: Scenario, seed: int) -> None:
+def surrogate_command(args: argparse.Namespace, scenario: Scenario, seed: int) -> list[str]:
     output_dir = args.output_dir / scenario.name / f"seed_{seed}" / "surrogate"
     command = [
         sys.executable,
@@ -131,12 +158,27 @@ def run_surrogate(args: argparse.Namespace, scenario: Scenario, seed: int) -> No
         command += ["--partition", scenario.partition, "--n-clients", str(scenario.n_clients)]
         if scenario.feature_column is not None:
             command += ["--feature-column", scenario.feature_column]
-    run_command(command)
+    return command
 
 
-def run_command(command: list[str]) -> None:
+def run_commands(args: argparse.Namespace, commands: list[list[str]]) -> None:
+    if not commands:
+        return
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        futures = [
+            executor.submit(run_command, command, args.threads_per_job) for command in commands
+        ]
+        for future in futures:
+            future.result()
+
+
+def run_command(command: list[str], threads_per_job: int) -> None:
     print("\n$", " ".join(command), flush=True)
-    subprocess.run(command, check=True)
+    env = os.environ.copy()
+    thread_count = str(threads_per_job)
+    for variable in ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"]:
+        env[variable] = thread_count
+    subprocess.run(command, check=True, env=env)
 
 
 def aggregate_outputs(output_dir: Path, scenarios: list[Scenario], seeds: list[int]) -> None:
@@ -163,7 +205,7 @@ def aggregate_outputs(output_dir: Path, scenarios: list[Scenario], seeds: list[i
             in {"pearson", "spearman", "mae", "rmse", "r2"}
             or column.endswith("_auroc")
             or column.endswith("_auprc")
-            or column.endswith("_risk_at_5")
+            or "_risk_at_" in column
         ]
         surrogate_summary = summarize_metrics(
             surrogate,

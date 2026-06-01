@@ -201,6 +201,13 @@ Run the five-seed experiment used for the current summary tables:
 python experiments\run_multiseed.py --seeds 42,43,44,45,46 --output-dir outputs\multiseed_5_baselines
 ```
 
+Use controlled parallelism on a multi-core CPU and resume from completed CSV
+outputs:
+
+```powershell
+python experiments\run_multiseed.py --seeds 42,43,44,45,46 --jobs 4 --threads-per-job 2 --skip-existing --output-dir outputs\multiseed_5_baselines
+```
+
 Main outputs:
 
 ```text
@@ -290,11 +297,28 @@ python experiments\summarize_overhead.py --input-dir outputs\overhead --output-d
 python experiments\run_communication_analysis.py --output-dir outputs\communication --seed 42
 ```
 
+Run the five-seed timing analysis and aggregate mean/std results:
+
+```powershell
+python experiments\run_multiseed_overhead.py --seeds 42,43,44,45,46 --output-dir outputs\overhead_multiseed
+```
+
+For a quick smoke run, controlled parallelism can resume from completed
+overhead CSV outputs:
+
+```powershell
+python experiments\run_multiseed_overhead.py --seeds 42,43,44,45,46 --jobs 4 --threads-per-job 2 --skip-existing --output-dir outputs\overhead_multiseed
+```
+
+Do not use parallel workers for paper-reported timing measurements. Run the
+serial command above so concurrent jobs do not contend for CPU resources.
+
 Main outputs:
 
 ```text
 outputs/overhead/
   overhead_summary.csv
+  overhead_mean_std.csv
   OVERHEAD_SUMMARY.md
   overhead_compute_time.png/pdf
   overhead_communication.png/pdf
@@ -405,5 +429,6 @@ not claim that hash reliability dominates every direct kNN reliability variant.
 - Multi-seed surrogate experiments can take several minutes on CPU.
 - The current overhead table is a representative seed-42 measurement. It can be
   extended to multi-seed timing if needed.
-- `Risk@5%` is reported in the current surrogate tables. For the paper, the next
-  planned extension is to report Risk@1%, Risk@5%, and Risk@10%.
+- `Risk@1%`, `Risk@5%`, and `Risk@10%` are reported in the surrogate tables.
+- Multi-seed overhead timing is available through `run_multiseed_overhead.py`;
+  run timing experiments on an otherwise idle machine to reduce measurement noise.
