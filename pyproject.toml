@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fedrel-journal-reliability"
+version = "0.1.0"
+description = "Journal extension for transferable and deployable reliability estimation in federated healthcare learning."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "torch",
+    "matplotlib",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "tabulate",
+]
+
+[tool.setuptools.packages.find]
+include = ["fedrel_journal*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
