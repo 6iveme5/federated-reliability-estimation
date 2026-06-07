@@ -21,12 +21,13 @@ def _clients():
 
 
 def test_federated_binary_classifier_predicts_probabilities():
-    surrogate_clients = build_hash_teacher_surrogate_clients(
+    protocol = build_hash_teacher_surrogate_clients(
         _clients(),
         include_federated_confidence=True,
         federated_task_config=FederatedTaskConfig(rounds=1, local_epochs=1, seed=7),
         seed=7,
     )
+    surrogate_clients = protocol.eval_clients
 
     assert "pmax_fl" in surrogate_clients[0].baselines
     assert "entropy_fl" in surrogate_clients[0].baselines

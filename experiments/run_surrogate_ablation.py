@@ -173,7 +173,7 @@ def load_dataset(scenario: Scenario, config: dict, seed: int):
 
 
 def get_surrogate_clients(
-    cache: dict[int, list],
+    cache: dict[int, object],
     dataset,
     config: dict,
     n_hash: int,
@@ -226,9 +226,14 @@ def run_one_setting(
         seed=seed,
         device=device,
     )
-    model = SurrogateMLP(input_dim=clients[0].x.shape[1], hidden_dims=hidden_dims)
-    result = train_federated_surrogate(clients, config=train_config, model=model)
-    row = evaluate_setting(result.model, clients, device)
+    model = SurrogateMLP(input_dim=clients.train_clients[0].x.shape[1], hidden_dims=hidden_dims)
+    result = train_federated_surrogate(
+        clients.train_clients,
+        eval_clients=clients.eval_clients,
+        config=train_config,
+        model=model,
+    )
+    row = evaluate_setting(result.model, clients.eval_clients, device)
     row.update(
         {
             "scenario": scenario.name,

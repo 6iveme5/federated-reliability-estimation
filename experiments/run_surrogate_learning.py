@@ -68,7 +68,7 @@ def main() -> None:
 
     dataset = load_dataset(args, config, seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    surrogate_clients = build_hash_teacher_surrogate_clients(
+    protocol = build_hash_teacher_surrogate_clients(
         dataset.clients,
         k=int(config["reliability"]["neighbors"]),
         n_hash=int(config["reliability"]["hash_dim"]),
@@ -105,16 +105,21 @@ def main() -> None:
             seed=seed,
             device=device,
         )
-        model = SurrogateMLP(input_dim=surrogate_clients[0].x.shape[1], hidden_dims=hidden_dims)
-        result = train_federated_surrogate(surrogate_clients, config=train_config, model=model)
+        model = SurrogateMLP(input_dim=protocol.train_clients[0].x.shape[1], hidden_dims=hidden_dims)
+        result = train_federated_surrogate(
+            protocol.train_clients,
+            eval_clients=protocol.eval_clients,
+            config=train_config,
+            model=model,
+        )
         histories[optimizer_name] = result.history
-        rows.append(evaluation_row(args, optimizer_name, result.model, surrogate_clients, device))
+        rows.append(evaluation_row(args, optimizer_name, result.model, protocol.eval_clients, device))
 
         model_path = output_dir / f"surrogate_{args.dataset}_{args.partition}_{optimizer_name}.pt"
         torch.save(
             {
                 "model_state_dict": result.model.state_dict(),
-                "input_dim": int(surrogate_clients[0].x.shape[1]),
+                "input_dim": int(protocol.train_clients[0].x.shape[1]),
                 "hidden_dims": list(hidden_dims),
                 "optimizer": optimizer_name,
                 "dataset": args.dataset,

@@ -58,7 +58,7 @@ def main() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     teacher_start = time.perf_counter()
-    surrogate_clients = build_hash_teacher_surrogate_clients(
+    protocol = build_hash_teacher_surrogate_clients(
         dataset.clients,
         k=int(config["reliability"]["neighbors"]),
         n_hash=int(config["reliability"]["hash_dim"]),
@@ -83,10 +83,14 @@ def main() -> None:
     )
 
     train_start = time.perf_counter()
-    result = train_federated_surrogate(surrogate_clients, config=train_config)
+    result = train_federated_surrogate(
+        protocol.train_clients,
+        eval_clients=protocol.eval_clients,
+        config=train_config,
+    )
     train_time = time.perf_counter() - train_start
 
-    x_all = np.vstack([client.x for client in surrogate_clients]).astype(np.float32)
+    x_all = np.vstack([client.x for client in protocol.eval_clients]).astype(np.float32)
     inference_times = []
     for _ in range(args.repeat_inference):
         start = time.perf_counter()
@@ -95,7 +99,7 @@ def main() -> None:
     inference_time = float(np.median(inference_times))
 
     model_bytes = model_nbytes(result.model)
-    n_clients = len(surrogate_clients)
+    n_clients = len(protocol.train_clients)
     rounds = int(config["federated"]["rounds"])
     total_download_bytes = model_bytes * n_clients * rounds
     total_upload_bytes = model_bytes * n_clients * rounds
@@ -104,7 +108,10 @@ def main() -> None:
     else:
         server_state_bytes = 0
 
-    n_teacher_samples = int(sum(len(client.teacher_reliability) for client in surrogate_clients))
+    n_teacher_samples = int(
+        sum(len(client.teacher_reliability) for client in protocol.train_clients)
+        + sum(len(client.teacher_reliability) for client in protocol.eval_clients)
+    )
     rows = [
         {
             "dataset": args.dataset,

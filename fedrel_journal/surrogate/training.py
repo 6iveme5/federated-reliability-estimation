@@ -45,6 +45,12 @@ class SurrogateClientDataset:
 
 
 @dataclass
+class SurrogateProtocolDatasets:
+    train_clients: list[SurrogateClientDataset]
+    eval_clients: list[SurrogateClientDataset]
+
+
+@dataclass
 class FederatedSurrogateConfig:
     optimizer: FederatedOptimizer = "fedavg"
     rounds: int = 20
@@ -88,12 +94,15 @@ def set_seed(seed: int) -> None:
 def build_hash_teacher_surrogate_clients(
     clients: list[ClientDataset],
     validation_fraction: float = 0.2,
+    surrogate_train_fraction: float = 0.5,
     k: int = 10,
     n_hash: int = 128,
     seed: int = 42,
     include_federated_confidence: bool = False,
     federated_task_config: FederatedTaskConfig | None = None,
-) -> list[SurrogateClientDataset]:
+) -> SurrogateProtocolDatasets:
+    if not 0.0 < surrogate_train_fraction < 1.0:
+        raise ValueError("surrogate_train_fraction must be between 0 and 1")
     splits = [
         _client_split(
             client,
@@ -102,70 +111,167 @@ def build_hash_teacher_surrogate_clients(
         )
         for client in clients
     ]
-    federated_predictions = {}
     if include_federated_confidence:
         config = federated_task_config or FederatedTaskConfig(seed=seed)
         task_model = train_federated_binary_classifier(splits, config=config)
-        federated_predictions = {
-            split.client_id: predict_binary_classifier(task_model, split.x_val, device=config.device)
-            for split in splits
-        }
-        centroid_fl = federated_centroid_reliability(splits, federated_predictions)
     else:
-        centroid_fl = {}
+        config = None
 
-    surrogate_clients = []
+    split_queries: dict[int, dict[str, tuple[np.ndarray, np.ndarray]]] = {}
     for split in splits:
-        x_train, x_val, y_train, y_val = (
+        x_train, x_holdout, y_train, y_holdout = (
             split.x_train,
             split.x_val,
             split.y_train,
             split.y_val,
         )
-        pred, proba = fit_predict_local_task_model(x_train, y_train, x_val)
-        teacher = classaware_hash_reliability(
-            x_train,
-            y_train,
-            x_val,
-            pred,
+        x_surrogate_train, x_surrogate_eval, y_surrogate_train, y_surrogate_eval = _train_validation_split(
+            x_holdout,
+            y_holdout,
+            validation_fraction=1.0 - surrogate_train_fraction,
+            seed=seed + 10_000 + split.client_id,
+        )
+        pred_train, proba_train = fit_predict_local_task_model(x_train, y_train, x_surrogate_train)
+        pred_eval, proba_eval = fit_predict_local_task_model(x_train, y_train, x_surrogate_eval)
+        split_queries[split.client_id] = {
+            "train": (x_surrogate_train, y_surrogate_train, pred_train, proba_train),
+            "eval": (x_surrogate_eval, y_surrogate_eval, pred_eval, proba_eval),
+        }
+
+    train_centroid_fl = {}
+    eval_centroid_fl = {}
+    train_fl_outputs: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    eval_fl_outputs: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    if include_federated_confidence:
+        assert config is not None
+        for split in splits:
+            x_surrogate_train, _, _, _ = split_queries[split.client_id]["train"]
+            x_surrogate_eval, _, _, _ = split_queries[split.client_id]["eval"]
+            train_fl_outputs[split.client_id] = predict_binary_classifier(
+                task_model,
+                x_surrogate_train,
+                device=config.device,
+            )
+            eval_fl_outputs[split.client_id] = predict_binary_classifier(
+                task_model,
+                x_surrogate_eval,
+                device=config.device,
+            )
+        train_centroid_fl = federated_centroid_reliability(
+            splits,
+            {
+                client_id: (split_queries[client_id]["train"][0], pred)
+                for client_id, (pred, _) in train_fl_outputs.items()
+            },
+        )
+        eval_centroid_fl = federated_centroid_reliability(
+            splits,
+            {
+                client_id: (split_queries[client_id]["eval"][0], pred)
+                for client_id, (pred, _) in eval_fl_outputs.items()
+            },
+        )
+
+    train_clients = []
+    eval_clients = []
+    for split in splits:
+        x_surrogate_train, y_surrogate_train, pred_train, proba_train = split_queries[split.client_id]["train"]
+        x_surrogate_eval, y_surrogate_eval, pred_eval, proba_eval = split_queries[split.client_id]["eval"]
+        teacher_train = classaware_hash_reliability(
+            split.x_train,
+            split.y_train,
+            x_surrogate_train,
+            pred_train,
             k=k,
             n_hash=n_hash,
             seed=seed,
         )
-        baselines = confidence_baselines(proba)
-        baselines["centroid"] = centroid_reliability(x_train, y_train, x_val, pred)
-        baselines["feature_knn"] = feature_knn_classaware_reliability(
-            x_train,
-            y_train,
-            x_val,
-            pred,
+        teacher_eval = classaware_hash_reliability(
+            split.x_train,
+            split.y_train,
+            x_surrogate_eval,
+            pred_eval,
+            k=k,
+            n_hash=n_hash,
+            seed=seed,
+        )
+        train_baselines = confidence_baselines(proba_train)
+        train_baselines["centroid"] = centroid_reliability(
+            split.x_train,
+            split.y_train,
+            x_surrogate_train,
+            pred_train,
+        )
+        train_baselines["feature_knn"] = feature_knn_classaware_reliability(
+            split.x_train,
+            split.y_train,
+            x_surrogate_train,
+            pred_train,
             k=k,
         )
-        baselines["lof"] = lof_reliability(x_train, x_val, k=k)
-        baseline_errors = {}
-        if include_federated_confidence:
-            pred_fl, proba_fl = federated_predictions[split.client_id]
-            for name, values in confidence_baselines(proba_fl).items():
-                baseline_name = f"{name}_fl"
-                baselines[baseline_name] = values
-                baseline_errors[baseline_name] = (pred_fl != y_val).astype(int)
-            baselines["centroid_fl"] = centroid_fl[split.client_id]
-            baseline_errors["centroid_fl"] = (pred_fl != y_val).astype(int)
+        train_baselines["lof"] = lof_reliability(split.x_train, x_surrogate_train, k=k)
 
-        surrogate_clients.append(
+        eval_baselines = confidence_baselines(proba_eval)
+        eval_baselines["centroid"] = centroid_reliability(
+            split.x_train,
+            split.y_train,
+            x_surrogate_eval,
+            pred_eval,
+        )
+        eval_baselines["feature_knn"] = feature_knn_classaware_reliability(
+            split.x_train,
+            split.y_train,
+            x_surrogate_eval,
+            pred_eval,
+            k=k,
+        )
+        eval_baselines["lof"] = lof_reliability(split.x_train, x_surrogate_eval, k=k)
+
+        train_baseline_errors = {}
+        eval_baseline_errors = {}
+        if include_federated_confidence:
+            pred_fl_train, proba_fl_train = train_fl_outputs[split.client_id]
+            pred_fl_eval, proba_fl_eval = eval_fl_outputs[split.client_id]
+            for name, values in confidence_baselines(proba_fl_train).items():
+                baseline_name = f"{name}_fl"
+                train_baselines[baseline_name] = values
+                train_baseline_errors[baseline_name] = (pred_fl_train != y_surrogate_train).astype(int)
+            for name, values in confidence_baselines(proba_fl_eval).items():
+                baseline_name = f"{name}_fl"
+                eval_baselines[baseline_name] = values
+                eval_baseline_errors[baseline_name] = (pred_fl_eval != y_surrogate_eval).astype(int)
+            train_baselines["centroid_fl"] = train_centroid_fl[split.client_id]
+            train_baseline_errors["centroid_fl"] = (pred_fl_train != y_surrogate_train).astype(int)
+            eval_baselines["centroid_fl"] = eval_centroid_fl[split.client_id]
+            eval_baseline_errors["centroid_fl"] = (pred_fl_eval != y_surrogate_eval).astype(int)
+
+        train_clients.append(
             SurrogateClientDataset(
                 client_id=split.client_id,
                 name=split.name,
-                x=x_val.astype(np.float32),
-                teacher_reliability=teacher.astype(np.float32),
-                errors=(pred != y_val).astype(int),
-                baselines={key: value.astype(np.float32) for key, value in baselines.items()},
+                x=x_surrogate_train.astype(np.float32),
+                teacher_reliability=teacher_train.astype(np.float32),
+                errors=(pred_train != y_surrogate_train).astype(int),
+                baselines={key: value.astype(np.float32) for key, value in train_baselines.items()},
                 baseline_errors={
-                    key: value.astype(int) for key, value in baseline_errors.items()
+                    key: value.astype(int) for key, value in train_baseline_errors.items()
                 },
             )
         )
-    return surrogate_clients
+        eval_clients.append(
+            SurrogateClientDataset(
+                client_id=split.client_id,
+                name=split.name,
+                x=x_surrogate_eval.astype(np.float32),
+                teacher_reliability=teacher_eval.astype(np.float32),
+                errors=(pred_eval != y_surrogate_eval).astype(int),
+                baselines={key: value.astype(np.float32) for key, value in eval_baselines.items()},
+                baseline_errors={
+                    key: value.astype(int) for key, value in eval_baseline_errors.items()
+                },
+            )
+        )
+    return SurrogateProtocolDatasets(train_clients=train_clients, eval_clients=eval_clients)
 
 
 def fit_predict_local_task_model(
@@ -188,6 +294,7 @@ def fit_predict_local_task_model(
 
 def train_federated_surrogate(
     surrogate_clients: list[SurrogateClientDataset],
+    eval_clients: list[SurrogateClientDataset] | None = None,
     input_dim: int | None = None,
     config: FederatedSurrogateConfig | None = None,
     model: nn.Module | None = None,
@@ -237,7 +344,7 @@ def train_federated_surrogate(
 
         round_metrics = evaluate_surrogate_approximation(
             global_model,
-            surrogate_clients,
+            eval_clients or surrogate_clients,
             config.device,
         )
         round_metrics["round"] = float(round_idx)
@@ -423,9 +530,9 @@ def federated_centroid_reliability(
     distances_by_client: dict[int, np.ndarray] = {}
     all_distances = []
     for split in splits:
-        pred, _ = federated_predictions[split.client_id]
+        x_query, pred = federated_predictions[split.client_id]
         distances = []
-        for x_i, pred_i in zip(split.x_val, pred, strict=True):
+        for x_i, pred_i in zip(x_query, pred, strict=True):
             centroid = centroids.get(int(pred_i))
             distance = fallback if centroid is None else float(np.linalg.norm(x_i - centroid))
             distances.append(distance)
