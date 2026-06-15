@@ -44,6 +44,9 @@ class SurrogateClientDataset:
     x: np.ndarray
     teacher_reliability: np.ndarray
     errors: np.ndarray | None = None
+    task_y_true: np.ndarray | None = None
+    task_pred: np.ndarray | None = None
+    task_proba: np.ndarray | None = None
     baselines: dict[str, np.ndarray] = field(default_factory=dict)
     baseline_errors: dict[str, np.ndarray] = field(default_factory=dict)
 
@@ -183,13 +186,21 @@ def build_hash_teacher_surrogate_clients(
         x_surrogate_eval, y_surrogate_eval, pred_eval, proba_eval = split_queries[split.client_id]["eval"]
         reliability_pred_train = pred_train
         reliability_pred_eval = pred_eval
+        task_pred_train = pred_train
+        task_pred_eval = pred_eval
+        task_proba_train = proba_train
+        task_proba_eval = proba_eval
         train_errors = (pred_train != y_surrogate_train).astype(int)
         eval_errors = (pred_eval != y_surrogate_eval).astype(int)
         if include_federated_confidence:
-            pred_fl_train, _ = train_fl_outputs[split.client_id]
-            pred_fl_eval, _ = eval_fl_outputs[split.client_id]
+            pred_fl_train, proba_fl_train = train_fl_outputs[split.client_id]
+            pred_fl_eval, proba_fl_eval = eval_fl_outputs[split.client_id]
             reliability_pred_train = pred_fl_train
             reliability_pred_eval = pred_fl_eval
+            task_pred_train = pred_fl_train
+            task_pred_eval = pred_fl_eval
+            task_proba_train = proba_fl_train
+            task_proba_eval = proba_fl_eval
             train_errors = (pred_fl_train != y_surrogate_train).astype(int)
             eval_errors = (pred_fl_eval != y_surrogate_eval).astype(int)
 
@@ -271,6 +282,9 @@ def build_hash_teacher_surrogate_clients(
                 x=x_surrogate_train.astype(np.float32),
                 teacher_reliability=teacher_train.astype(np.float32),
                 errors=train_errors,
+                task_y_true=y_surrogate_train.astype(int),
+                task_pred=task_pred_train.astype(int),
+                task_proba=task_proba_train.astype(np.float32),
                 baselines={key: value.astype(np.float32) for key, value in train_baselines.items()},
                 baseline_errors={
                     key: value.astype(int) for key, value in train_baseline_errors.items()
@@ -284,6 +298,9 @@ def build_hash_teacher_surrogate_clients(
                 x=x_surrogate_eval.astype(np.float32),
                 teacher_reliability=teacher_eval.astype(np.float32),
                 errors=eval_errors,
+                task_y_true=y_surrogate_eval.astype(int),
+                task_pred=task_pred_eval.astype(int),
+                task_proba=task_proba_eval.astype(np.float32),
                 baselines={key: value.astype(np.float32) for key, value in eval_baselines.items()},
                 baseline_errors={
                     key: value.astype(int) for key, value in eval_baseline_errors.items()

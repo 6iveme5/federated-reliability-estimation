@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
 from fedrel_journal.config import load_config
 from fedrel_journal.data import (
@@ -211,6 +212,7 @@ def evaluation_row(args, optimizer_name, model, surrogate_clients, device):
         "rmse": approx["rmse"],
         "r2": approx["r2"],
     }
+    row.update(task_classifier_metrics(surrogate_clients))
     for method, scores in method_scores.items():
         method_error_labels = method_errors.get(method, errors)
         detection = error_detection_metrics(method_error_labels, scores)
@@ -223,6 +225,37 @@ def evaluation_row(args, optimizer_name, model, surrogate_clients, device):
                 fraction=percentage / 100.0,
             )
     return row
+
+
+def task_classifier_metrics(surrogate_clients) -> dict[str, float]:
+    y_true = np.concatenate(
+        [client.task_y_true for client in surrogate_clients if client.task_y_true is not None]
+    )
+    pred = np.concatenate(
+        [client.task_pred for client in surrogate_clients if client.task_pred is not None]
+    )
+    proba = np.vstack(
+        [client.task_proba for client in surrogate_clients if client.task_proba is not None]
+    )
+    proba_pos = positive_class_probability(proba)
+    task_auroc = float("nan")
+    if len(np.unique(y_true)) >= 2:
+        task_auroc = float(roc_auc_score(y_true, proba_pos))
+    return {
+        "task_auroc": task_auroc,
+        "task_accuracy": float(accuracy_score(y_true, pred)),
+        "task_f1": float(f1_score(y_true, pred, zero_division=0)),
+        "task_error_rate": float(np.mean(pred != y_true)),
+    }
+
+
+def positive_class_probability(proba: np.ndarray) -> np.ndarray:
+    proba = np.asarray(proba)
+    if proba.ndim == 1:
+        return proba
+    if proba.shape[1] == 1:
+        return proba[:, 0]
+    return proba[:, 1]
 
 
 def collect_method_scores(surrogate_clients) -> dict[str, np.ndarray]:

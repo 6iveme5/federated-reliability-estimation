@@ -36,6 +36,13 @@ def test_federated_binary_classifier_predicts_probabilities():
     assert "pmax_fl" in surrogate_clients[0].baseline_errors
     assert "centroid_fl" in surrogate_clients[0].baseline_errors
     assert np.array_equal(surrogate_clients[0].errors, surrogate_clients[0].baseline_errors["pmax_fl"])
+    assert surrogate_clients[0].task_y_true is not None
+    assert surrogate_clients[0].task_pred is not None
+    assert surrogate_clients[0].task_proba is not None
+    assert np.array_equal(
+        surrogate_clients[0].errors,
+        (surrogate_clients[0].task_pred != surrogate_clients[0].task_y_true).astype(int),
+    )
     assert np.array_equal(
         surrogate_clients[0].errors,
         surrogate_clients[0].baseline_errors["centroid_fl"],
