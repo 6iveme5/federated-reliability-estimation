@@ -203,6 +203,7 @@ def aggregate_outputs(output_dir: Path, scenarios: list[Scenario], seeds: list[i
             for column in surrogate.columns
             if column
             in {"pearson", "spearman", "mae", "rmse", "r2"}
+            or column in {"task_accuracy", "task_f1", "task_error_rate"}
             or column.endswith("_auroc")
             or column.endswith("_auprc")
             or "_risk_at_" in column
