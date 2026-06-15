@@ -53,7 +53,7 @@ def plot_hash_dim(summary: pd.DataFrame, output_dir: Path) -> None:
         colors=colors,
         metric="r2",
         ylabel="Teacher approximation R2",
-        title="Hash Dimension Ablation",
+        title="Projection Dimension Ablation",
         output_path=output_dir / "hash_dim_r2",
     )
     plot_grouped_bars(
@@ -63,7 +63,7 @@ def plot_hash_dim(summary: pd.DataFrame, output_dir: Path) -> None:
         colors=colors,
         metric="surrogate_auroc",
         ylabel="Misclassification detection AUROC",
-        title="Hash Dimension Ablation",
+        title="Projection Dimension Ablation",
         output_path=output_dir / "hash_dim_auroc",
         ylim=(0.6, 0.9),
     )
