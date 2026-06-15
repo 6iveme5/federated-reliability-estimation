@@ -20,7 +20,11 @@ from fedrel_journal.methods.baselines import (
     feature_knn_classaware_reliability,
     lof_reliability,
 )
-from fedrel_journal.methods.hash_teacher import classaware_hash_reliability
+from fedrel_journal.methods.hash_teacher import (
+    apply_reliability_postprocess,
+    classaware_hash_raw_scores,
+    fit_reliability_postprocess,
+)
 from fedrel_journal.metrics import approximation_metrics, minmax01
 from fedrel_journal.surrogate.model import SurrogateMLP
 from fedrel_journal.task import (
@@ -189,7 +193,7 @@ def build_hash_teacher_surrogate_clients(
             train_errors = (pred_fl_train != y_surrogate_train).astype(int)
             eval_errors = (pred_fl_eval != y_surrogate_eval).astype(int)
 
-        teacher_train = classaware_hash_reliability(
+        teacher_train_raw = classaware_hash_raw_scores(
             split.x_train,
             split.y_train,
             x_surrogate_train,
@@ -198,7 +202,7 @@ def build_hash_teacher_surrogate_clients(
             n_hash=n_hash,
             seed=seed,
         )
-        teacher_eval = classaware_hash_reliability(
+        teacher_eval_raw = classaware_hash_raw_scores(
             split.x_train,
             split.y_train,
             x_surrogate_eval,
@@ -207,6 +211,9 @@ def build_hash_teacher_surrogate_clients(
             n_hash=n_hash,
             seed=seed,
         )
+        teacher_postprocess = fit_reliability_postprocess(teacher_train_raw)
+        teacher_train = apply_reliability_postprocess(teacher_train_raw, teacher_postprocess)
+        teacher_eval = apply_reliability_postprocess(teacher_eval_raw, teacher_postprocess)
         train_baselines = confidence_baselines(proba_train)
         train_baselines["centroid"] = centroid_reliability(
             split.x_train,
