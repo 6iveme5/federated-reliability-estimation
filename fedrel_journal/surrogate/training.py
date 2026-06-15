@@ -177,11 +177,23 @@ def build_hash_teacher_surrogate_clients(
     for split in splits:
         x_surrogate_train, y_surrogate_train, pred_train, proba_train = split_queries[split.client_id]["train"]
         x_surrogate_eval, y_surrogate_eval, pred_eval, proba_eval = split_queries[split.client_id]["eval"]
+        reliability_pred_train = pred_train
+        reliability_pred_eval = pred_eval
+        train_errors = (pred_train != y_surrogate_train).astype(int)
+        eval_errors = (pred_eval != y_surrogate_eval).astype(int)
+        if include_federated_confidence:
+            pred_fl_train, _ = train_fl_outputs[split.client_id]
+            pred_fl_eval, _ = eval_fl_outputs[split.client_id]
+            reliability_pred_train = pred_fl_train
+            reliability_pred_eval = pred_fl_eval
+            train_errors = (pred_fl_train != y_surrogate_train).astype(int)
+            eval_errors = (pred_fl_eval != y_surrogate_eval).astype(int)
+
         teacher_train = classaware_hash_reliability(
             split.x_train,
             split.y_train,
             x_surrogate_train,
-            pred_train,
+            reliability_pred_train,
             k=k,
             n_hash=n_hash,
             seed=seed,
@@ -190,7 +202,7 @@ def build_hash_teacher_surrogate_clients(
             split.x_train,
             split.y_train,
             x_surrogate_eval,
-            pred_eval,
+            reliability_pred_eval,
             k=k,
             n_hash=n_hash,
             seed=seed,
@@ -200,13 +212,13 @@ def build_hash_teacher_surrogate_clients(
             split.x_train,
             split.y_train,
             x_surrogate_train,
-            pred_train,
+            reliability_pred_train,
         )
         train_baselines["feature_knn"] = feature_knn_classaware_reliability(
             split.x_train,
             split.y_train,
             x_surrogate_train,
-            pred_train,
+            reliability_pred_train,
             k=k,
         )
         train_baselines["lof"] = lof_reliability(split.x_train, x_surrogate_train, k=k)
@@ -216,13 +228,13 @@ def build_hash_teacher_surrogate_clients(
             split.x_train,
             split.y_train,
             x_surrogate_eval,
-            pred_eval,
+            reliability_pred_eval,
         )
         eval_baselines["feature_knn"] = feature_knn_classaware_reliability(
             split.x_train,
             split.y_train,
             x_surrogate_eval,
-            pred_eval,
+            reliability_pred_eval,
             k=k,
         )
         eval_baselines["lof"] = lof_reliability(split.x_train, x_surrogate_eval, k=k)
@@ -251,7 +263,7 @@ def build_hash_teacher_surrogate_clients(
                 name=split.name,
                 x=x_surrogate_train.astype(np.float32),
                 teacher_reliability=teacher_train.astype(np.float32),
-                errors=(pred_train != y_surrogate_train).astype(int),
+                errors=train_errors,
                 baselines={key: value.astype(np.float32) for key, value in train_baselines.items()},
                 baseline_errors={
                     key: value.astype(int) for key, value in train_baseline_errors.items()
@@ -264,7 +276,7 @@ def build_hash_teacher_surrogate_clients(
                 name=split.name,
                 x=x_surrogate_eval.astype(np.float32),
                 teacher_reliability=teacher_eval.astype(np.float32),
-                errors=(pred_eval != y_surrogate_eval).astype(int),
+                errors=eval_errors,
                 baselines={key: value.astype(np.float32) for key, value in eval_baselines.items()},
                 baseline_errors={
                     key: value.astype(int) for key, value in eval_baseline_errors.items()

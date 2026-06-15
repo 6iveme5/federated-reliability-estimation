@@ -35,6 +35,11 @@ def test_federated_binary_classifier_predicts_probabilities():
     assert "centroid_fl" in surrogate_clients[0].baselines
     assert "pmax_fl" in surrogate_clients[0].baseline_errors
     assert "centroid_fl" in surrogate_clients[0].baseline_errors
+    assert np.array_equal(surrogate_clients[0].errors, surrogate_clients[0].baseline_errors["pmax_fl"])
+    assert np.array_equal(
+        surrogate_clients[0].errors,
+        surrogate_clients[0].baseline_errors["centroid_fl"],
+    )
 
 
 def test_train_federated_binary_classifier_directly():
