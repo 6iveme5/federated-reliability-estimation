@@ -2,7 +2,7 @@
 
 Code for the paper:
 
-**Transferable and Deployable Reliability Estimation for Trustworthy Federated Healthcare AI**
+**Transfer-Guided Surrogate Learning for Deployable Point-Wise Reliability in Federated Healthcare AI**
 
 This repository implements a pipeline for reliability estimation in federated
 learning settings for clinical risk prediction:
